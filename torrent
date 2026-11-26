@@ -4,16 +4,16 @@ IMAGE="${TORRENT_IMAGE:-wireguard-aria2:local}"
 NAME="wireguard-aria2-$(id -u)"
 LABEL="io.github.xslim.wireguard-aria2"
 STATE="${TORRENT_STATE_DIR:-$HOME/.local/state/wireguard-aria2}"
-ROOT="${TORRENT_DOWNLOAD_ROOT:-$HOME}"
+ROOT="${TORRENT_DOWNLOAD_ROOT:-$HOME/Downloads}"
 WG="${TORRENT_WG_CONFIG:-$HOME/.config/wireguard/nordvpn.conf}"
 die() { echo "$*" >&2; exit 1; }
 usage() {
     cat <<'EOF'
-Usage: torrent [-i] add [source] [--option=value ...]
+Usage: torrent [-i] [add] <source> [--option=value ...]
        torrent [-i] <wireguard.conf> <source> [--option=value ...]
        torrent start [wireguard.conf]
-       torrent list | status <gid> | pause <gid> | resume <gid> | stop <gid>
-       torrent logs | shutdown
+       torrent list | status <gid> | pause <gid> | resume <gid> | remove <gid>
+       torrent logs | stop
 EOF
 }
 owned() {
@@ -62,51 +62,36 @@ case "${1:-}" in
     start) shift; [ "$#" -le 1 ] || die "Expected at most one config"; WG="${1:-$WG}"; start; exit ;;
     list) owned || { echo "Queue has not been started."; exit 0; }; rpc list; exit ;;
     logs) owned || die "Queue has not been started."; exec docker logs -f "$NAME" ;;
-    shutdown) owned || die "Queue has not been started."; exec docker stop -t 30 "$NAME" ;;
-    status|pause|resume|stop)
+    stop|shutdown) [ "$#" -eq 1 ] || die "Use torrent remove <gid> to remove a download."; owned || die "Queue has not been started."; exec docker stop -t 30 "$NAME" ;;
+    status|pause|resume|remove)
         [ "$#" -eq 2 ] || die "Supply a download GID."
         owned || die "Queue has not been started."
-        rpc "$@"; exit ;;
+        if [ "$1" = remove ]; then rpc stop "$2"; else rpc "$@"; fi; exit ;;
     add)
         shift
         case "${1:-}" in
             -i|--interactive) INTERACTIVE=true; shift ;;
         esac
         ;;
-    *) [ "$#" -ge 2 ] || die "Supply a VPN config and source, or use torrent add."; WG="$1"; shift ;;
+    *) if [[ "$1" == *.conf ]] && [ -f "$1" ]; then WG="$1"; shift; fi ;;
 esac
-if [ "$#" -eq 0 ]; then
-    [ -t 0 ] || die "Supply a magnet link or torrent file."
-    printf 'Magnet link or torrent file: ' >&2
-    IFS= read -r SOURCE
-else
-    SOURCE="$1"; shift
-fi
+[ "$#" -gt 0 ] || die "Supply a magnet link or torrent file."
+SOURCE="$1"; shift
 [ -n "$SOURCE" ] || die "No source provided."
+[ -d "$ROOT" ] || die "Download directory missing: $ROOT"
 ROOT="$(realpath "$ROOT")"
-CURRENT="$(pwd -P)"
-if [ "$CURRENT" = "$ROOT" ]; then
-    DEST=/downloads
-elif [[ "$CURRENT" == "$ROOT/"* ]]; then
-    DEST="/downloads/${CURRENT#"$ROOT/"}"
-else
-    die "Current directory is outside download root $ROOT."
-fi
+DEST=/downloads
 if [ -f "$SOURCE" ]; then KIND=file
 elif [[ "$SOURCE" == magnet:\?* ]]; then KIND=magnet
 else die "Expected a torrent file or magnet link."
 fi
 if owned; then
     MOUNT="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/downloads"}}{{.Source}}{{end}}{{end}}' "$NAME")"
-    [ "$MOUNT" = "$ROOT" ] || die "Download root differs from existing queue. Shut down and recreate it first."
+    [ "$MOUNT" = "$ROOT" ] || die "Download root differs from existing queue. Stop and recreate it first."
     if [ -f "$WG" ]; then
         MOUNT="$(docker inspect -f '{{range .Mounts}}{{if eq .Destination "/gluetun/wireguard/wg0.conf"}}{{.Source}}{{end}}{{end}}' "$NAME")"
         [ "$MOUNT" = "$(realpath "$WG")" ] || die "VPN config differs from existing queue."
     fi
-elif [ ! -f "$WG" ] && [ -t 0 ]; then
-    printf 'WireGuard config [%s]: ' "$WG" >&2
-    IFS= read -r INPUT
-    WG="${INPUT:-$WG}"
 fi
 start
 if [ "$KIND" = file ]; then
