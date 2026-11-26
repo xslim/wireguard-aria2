@@ -1,8 +1,8 @@
 # wireguard-aria2
 
-One-shot BitTorrent downloads using aria2 and Gluetun WireGuard in a single temporary Docker container. Intended for Docker on macOS (including OrbStack) and Linux.
+One persistent Docker container running Gluetun WireGuard and aria2. All downloads share the VPN and RPC queue. No RPC port is exposed; the CLI uses docker exec.
 
-## Install
+## Install / upgrade
 
 ```sh
 mkdir -p ~/src
@@ -14,69 +14,54 @@ bash install.sh
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Add the export to your shell startup file to make it permanent.
+For existing installations, use git pull instead of clone and rebuild the image. Previous per-download containers are not migrated automatically. Let them finish or stop them explicitly.
 
 ## Usage
 
-Keep your WireGuard configuration outside the repository. Use a standard Gluetun-compatible WireGuard configuration (endpoint IP rather than hostname).
-
 ```sh
+export TORRENT_WG_CONFIG="$HOME/.config/wireguard/nordvpn.conf"
 cd ~/Downloads
-torrent ~/.config/wireguard/nordvpn.conf ubuntu.torrent
-torrent ~/.config/wireguard/nordvpn.conf 'magnet:?xt=urn:btih:...'
-torrent ~/.config/wireguard/nordvpn.conf ubuntu.torrent --max-download-limit=10M
-```
-
-The current directory is mounted at /downloads. The configuration and torrent input are read-only mounts. The container waits for Gluetun health, runs aria2 as the host UID/GID, stops seeding after completion and exits. Gluetun's firewall is intended to block non-VPN traffic. No ports are published.
-
-## Quick add
-
-```sh
 torrent add
-torrent add 'magnet:?xt=urn:btih:...'
 torrent add ubuntu.torrent
+torrent add 'magnet:?xt=urn:btih:...'
 torrent -i add ubuntu.torrent
-```
-
-With no source, the command prompts for a magnet link or torrent file. Enter a literal path (absolute or relative to the current directory; do not add shell quotes). It uses ~/.config/wireguard/nordvpn.conf by default, or the path set in TORRENT_WG_CONFIG. If the config does not exist, it prompts for a path in an interactive terminal. Downloads go into the current directory and appear in torrent list while active. Each addition starts its own VPN container immediately; there is no persistent queue.
-
-```sh
-export TORRENT_WG_CONFIG="$HOME/nordvpn.conf"
-torrent add
-```
-
-## Background downloads
-
-Downloads use Docker native detached mode by default and continue after disconnecting from SSH. Use `-i` or `--interactive` for foreground execution. The old `-d` flag remains supported.
-
-```sh
-torrent ~/.config/wireguard/nordvpn.conf ubuntu.torrent
-torrent -i ~/.config/wireguard/nordvpn.conf 'magnet:?xt=urn:btih:...'
 torrent list
-torrent logs <container-id>
-torrent status <container-id>
-torrent stop <container-id>
+torrent status <gid>
+torrent pause <gid>
+torrent resume <gid>
+torrent stop <gid>
+torrent logs
+torrent shutdown
+torrent start
 ```
 
-The detached command prints a container ID immediately, before VPN startup has necessarily completed. Use logs to check VPN readiness and progress. Multiple downloads can run independently; avoid downloading the same files concurrently. Management commands only accept IDs of containers labeled by this tool. Ctrl+C while following logs stops the log viewer, not the detached download.
+The first add starts the queue container if needed; later adds reuse it. By default one download is active at a time. Set TORRENT_MAX_CONCURRENT before creating the container to change this. The -i flag follows a download; interrupting the viewer is intended not to cancel the download. Logs follows the shared container logs. Stop removes an individual job without deleting its files. Shutdown stops the container, not the individual jobs; start resumes the saved unfinished queue. Session saves occur on submission and every 15 seconds, so abrupt termination can lose recent state. Completed history is in memory, not permanent.
 
-Containers automatically disappear on completion, failure or stop; their logs and exit status are then unavailable. Partial files remain in the original download directory and can be resumed by running the same download again. Docker/OrbStack must remain running.
+The default download root is your home directory. Current directories under that root are mapped to /downloads; directories outside it are rejected. Set TORRENT_DOWNLOAD_ROOT before first start to restrict or change the root. This is a writable bind mount, so the container can access the whole chosen root. Prefer a dedicated download directory if isolation matters.
 
-To update an existing installation with these CLI-only changes, run git pull and bash install.sh. No image rebuild is required if the existing image is already built.
+Use a Gluetun-compatible WireGuard configuration with an IP endpoint. Keep credentials outside the repository. A single queue uses one VPN configuration. To change the VPN or mount, shut down and remove the stopped queue container, then start again with the new settings:
+
+```sh
+torrent shutdown
+docker rm "wireguard-aria2-$(id -u)"
+torrent start
+```
+
+The state directory defaults to ~/.local/state/wireguard-aria2 and contains the session and RPC secret. Do not share it. Docker/OrbStack must remain running. No automatic restart after host reboot is configured.
 
 ## Rebuild
 
 ```sh
-cd ~/src/wireguard-aria2
+git pull
+torrent shutdown
+docker rm "wireguard-aria2-$(id -u)"
 bash build.sh
-# Or rebuild without cache:
-bash build.sh --no-cache
+bash install.sh
+torrent start
 ```
 
-The base image uses the moving v3 tag; pin a digest if reproducibility is required.
+Skip shutdown/removal if the container does not exist. The moving Gluetun v3 tag can be pinned for reproducible builds.
 
-## Troubleshooting and validation
+## Validation
 
-Check Docker with docker info. The Linux container needs NET_ADMIN and /dev/net/tun. Check the VPN startup logs and download-folder permissions. A VPN without port forwarding may have fewer reachable peers.
-
-This initial implementation is not yet runtime-tested. Before trusting the firewall, test with a legal Linux distribution torrent, compare the container exit IP with the host IP, and verify that connectivity fails when the VPN tunnel is interrupted. Never commit credentials. Ignore rules are a precaution, not a secret scanner.
+This version is not runtime-tested. Verify with a legal Linux distribution torrent, confirm exit IP and kill-switch behavior, then check queue persistence and download permissions. Docker needs NET_ADMIN and /dev/net/tun. No inbound VPN port forwarding is required, but peer connectivity may be reduced.
