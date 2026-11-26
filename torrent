@@ -3,7 +3,8 @@ set -euo pipefail
 IMAGE="${TORRENT_IMAGE:-wireguard-aria2:local}"
 LABEL="io.github.xslim.wireguard-aria2"
 usage() {
-    echo "Usage: torrent [-d|--detach] <wireguard.conf> <torrent-file|magnet> [aria2 options]"
+    echo "Usage: torrent [-i|--interactive] <wireguard.conf> <torrent-file|magnet> [aria2 options]"
+    echo "       torrent [-i] add [source]"
     echo "       torrent list | logs <id> | status <id> | stop <id>"
 }
 case "${1:-}" in
@@ -25,10 +26,35 @@ case "${1:-}" in
         ;;
     -h|--help) usage; exit 0 ;;
 esac
-DETACH=false
+DETACH=true
 case "${1:-}" in
     -d|--detach) DETACH=true; shift ;;
+    -i|--interactive) DETACH=false; shift ;;
 esac
+if [ "${1:-}" = add ]; then
+    shift
+    case "${1:-}" in
+        -i|--interactive) DETACH=false; shift ;;
+        -d|--detach) DETACH=true; shift ;;
+    esac
+    DEFAULT_WG="${TORRENT_WG_CONFIG:-$HOME/.config/wireguard/nordvpn.conf}"
+    if [ -f "$DEFAULT_WG" ]; then
+        WG_CONFIG="$DEFAULT_WG"
+    else
+        [ -t 0 ] || { echo "Set TORRENT_WG_CONFIG or supply an explicit config." >&2; exit 1; }
+        printf 'WireGuard config [%s]: ' "$DEFAULT_WG" >&2
+        IFS= read -r WG_CONFIG
+        WG_CONFIG="${WG_CONFIG:-$DEFAULT_WG}"
+    fi
+    if [ "$#" -eq 0 ]; then
+        [ -t 0 ] || { usage >&2; exit 1; }
+        printf 'Magnet link or torrent file: ' >&2
+        IFS= read -r SOURCE
+        [ -n "$SOURCE" ] || { echo "No source provided." >&2; exit 1; }
+        set -- "$SOURCE"
+    fi
+    set -- "$WG_CONFIG" "$@"
+fi
 if [ "$#" -lt 2 ]; then
     usage >&2
     exit 1
