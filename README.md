@@ -29,13 +29,29 @@ torrent ~/.config/wireguard/nordvpn.conf ubuntu.torrent --max-download-limit=10M
 
 The current directory is mounted at /downloads. The configuration and torrent input are read-only mounts. The container waits for Gluetun health, runs aria2 as the host UID/GID, stops seeding after completion and exits. Gluetun's firewall is intended to block non-VPN traffic. No ports are published.
 
-## Background downloads
-
-Use Docker's native detached mode to keep downloading after disconnecting from SSH:
+## Quick add
 
 ```sh
-torrent -d ~/.config/wireguard/nordvpn.conf ubuntu.torrent
-torrent --detach ~/.config/wireguard/nordvpn.conf 'magnet:?xt=urn:btih:...'
+torrent add
+torrent add 'magnet:?xt=urn:btih:...'
+torrent add ubuntu.torrent
+torrent -i add ubuntu.torrent
+```
+
+With no source, the command prompts for a magnet link or torrent file. Enter a literal path (absolute or relative to the current directory; do not add shell quotes). It uses ~/.config/wireguard/nordvpn.conf by default, or the path set in TORRENT_WG_CONFIG. If the config does not exist, it prompts for a path in an interactive terminal. Downloads go into the current directory and appear in torrent list while active. Each addition starts its own VPN container immediately; there is no persistent queue.
+
+```sh
+export TORRENT_WG_CONFIG="$HOME/nordvpn.conf"
+torrent add
+```
+
+## Background downloads
+
+Downloads use Docker native detached mode by default and continue after disconnecting from SSH. Use `-i` or `--interactive` for foreground execution. The old `-d` flag remains supported.
+
+```sh
+torrent ~/.config/wireguard/nordvpn.conf ubuntu.torrent
+torrent -i ~/.config/wireguard/nordvpn.conf 'magnet:?xt=urn:btih:...'
 torrent list
 torrent logs <container-id>
 torrent status <container-id>
