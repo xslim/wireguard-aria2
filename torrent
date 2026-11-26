@@ -1,0 +1,28 @@
+#!/bin/bash
+set -euo pipefail
+IMAGE="${TORRENT_IMAGE:-wireguard-aria2:local}"
+if [ "$#" -lt 2 ]; then
+    echo "Usage: torrent <wireguard.conf> <torrent-file|magnet> [aria2 options]" >&2
+    exit 1
+fi
+WG_CONFIG="$1"
+SOURCE="$2"
+shift 2
+[ -f "$WG_CONFIG" ] || { echo "WireGuard config not found." >&2; exit 1; }
+WG_CONFIG="$(realpath "$WG_CONFIG")"
+ARGS=()
+if [ -t 0 ] && [ -t 1 ]; then ARGS+=(-it); fi
+if [ -f "$SOURCE" ]; then
+    ARGS+=(-v "$(realpath "$SOURCE"):/input.torrent:ro")
+    SOURCE=/input.torrent
+elif [[ "$SOURCE" != magnet:\?* ]]; then
+    echo "Expected a torrent file or magnet link." >&2
+    exit 1
+fi
+exec docker run --rm --init \
+    ${ARGS[@]+"${ARGS[@]}"} \
+    --cap-add NET_ADMIN --device /dev/net/tun \
+    -e PUID="$(id -u)" -e PGID="$(id -g)" \
+    -v "$WG_CONFIG:/gluetun/wireguard/wg0.conf:ro" \
+    -v "$PWD:/downloads" \
+    "$IMAGE" "$@" -- "$SOURCE"
