@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
-mkdir -p "$HOME/.local/bin"
+mkdir -p "$HOME/.local/bin" "$HOME/Downloads"
 install -m 755 torrent "$HOME/.local/bin/torrent"
 echo "Installed: $HOME/.local/bin/torrent"
 case ":$PATH:" in
