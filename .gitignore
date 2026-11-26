@@ -1,0 +1,9 @@
+*.conf
+*.key
+*.pem
+*.torrent
+*.aria2
+.env
+.env.*
+downloads/
+.DS_Store
