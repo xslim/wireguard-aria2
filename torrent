@@ -1,8 +1,36 @@
 #!/bin/bash
 set -euo pipefail
 IMAGE="${TORRENT_IMAGE:-wireguard-aria2:local}"
+LABEL="io.github.xslim.wireguard-aria2"
+usage() {
+    echo "Usage: torrent [-d|--detach] <wireguard.conf> <torrent-file|magnet> [aria2 options]"
+    echo "       torrent list | logs <id> | status <id> | stop <id>"
+}
+case "${1:-}" in
+    list)
+        [ "$#" -eq 1 ] || { usage >&2; exit 1; }
+        exec docker ps --filter "label=$LABEL=true"
+        ;;
+    logs|status|stop)
+        [ "$#" -eq 2 ] || { usage >&2; exit 1; }
+        ID="$2"
+        [[ "$ID" =~ ^[a-f0-9]{12,64}$ ]] || { echo "Use a container ID from torrent list." >&2; exit 1; }
+        OWNED="$(docker inspect --type container --format '{{index .Config.Labels "io.github.xslim.wireguard-aria2"}}' "$ID")"
+        [ "$OWNED" = true ] || { echo "Not a torrent container." >&2; exit 1; }
+        case "$1" in
+            logs) exec docker logs -f "$ID" ;;
+            status) exec docker inspect --format '{{.State.Status}} (health: {{if .State.Health}}{{.State.Health.Status}}{{else}}n/a{{end}})' "$ID" ;;
+            stop) exec docker stop "$ID" ;;
+        esac
+        ;;
+    -h|--help) usage; exit 0 ;;
+esac
+DETACH=false
+case "${1:-}" in
+    -d|--detach) DETACH=true; shift ;;
+esac
 if [ "$#" -lt 2 ]; then
-    echo "Usage: torrent <wireguard.conf> <torrent-file|magnet> [aria2 options]" >&2
+    usage >&2
     exit 1
 fi
 WG_CONFIG="$1"
@@ -11,7 +39,11 @@ shift 2
 [ -f "$WG_CONFIG" ] || { echo "WireGuard config not found." >&2; exit 1; }
 WG_CONFIG="$(realpath "$WG_CONFIG")"
 ARGS=()
-if [ -t 0 ] && [ -t 1 ]; then ARGS+=(-it); fi
+if [ "$DETACH" = true ]; then
+    ARGS+=(-d)
+elif [ -t 0 ] && [ -t 1 ]; then
+    ARGS+=(-it)
+fi
 if [ -f "$SOURCE" ]; then
     ARGS+=(-v "$(realpath "$SOURCE"):/input.torrent:ro")
     SOURCE=/input.torrent
@@ -19,7 +51,7 @@ elif [[ "$SOURCE" != magnet:\?* ]]; then
     echo "Expected a torrent file or magnet link." >&2
     exit 1
 fi
-exec docker run --rm --init \
+exec docker run --rm --init --label "$LABEL=true" \
     ${ARGS[@]+"${ARGS[@]}"} \
     --cap-add NET_ADMIN --device /dev/net/tun \
     -e PUID="$(id -u)" -e PGID="$(id -g)" \
